@@ -67,7 +67,8 @@ safe-outputs:
   remove-labels:
     max: 3
   assign-to-agent:
-    max: 1
+    max: 3
+    target: "*"
   report-failure-as-issue: false
   noop:
 ---
@@ -201,20 +202,22 @@ safe-outputs:
 - 在调用 `create_issue` 时直接传入 `"parent": <PARENT_NUMBER>`（同时指定 `temporary_id`，例如 `"#aw_sub_a"`、`"#aw_sub_b"`、`"#aw_sub_c"`）；
 - 或在调用 `create_issue` 后配合调用 `link_sub_issue` 将子任务挂载到父 Issue 下。
 
-**三类标准子任务模板**：
-1. **`[Sub-issue A · 业务实现] <核心交易与跨服务改造标题>`**（若涉及 `src/order/`、`src/bus/`、`src/inventory/`）：
+**三类标准子任务模板与同次运行自动指派规则**：
+> ⚠️ **重要机制**：由 Action 自动创建的子 Issue 不会二次触发 `issues: opened` 事件，因此对于符合 **🟢 Tier L1** 的子任务（`#aw_sub_b`、`#aw_sub_c`），你**必须在本次运行中紧接着 `create_issue` 之后，直接调用 `assign_to_agent(issue_number: "#aw_sub_b", agent: "copilot")` 和 `assign_to_agent(issue_number: "#aw_sub_c", agent: "copilot")`**，从而在拆单瞬间把 L1 子单直接分配给 Cloud Agent 运行！
+
+1. **`[Sub-issue A · 业务实现] <核心交易与跨服务改造标题>`**（`temporary_id: "#aw_sub_a"`，若涉及 `src/order/`、`src/bus/`、`src/inventory/`）：
    - **负责角色**：`@inventory-impl`（`.github/agents/inventory-impl.agent.md`）
-   - **自治等级**：`🟠 Tier L2（核心交易/跨服务人工门禁 —— 需开发人员手动指派）`
+   - **自治等级与动作**：`🟠 Tier L2（核心交易/跨服务人工门禁）` —— **🛑 严禁对 `#aw_sub_a` 调用 `assign_to_agent`**，保留给开发人员架构评审后手动指派。
    - **标签**：`["enhancement", "agentic-sdlc", "high-priority"]`
    - **正文要求**：写明 `## 关联父需求：#<PARENT_NUMBER>`、负责角色、具体涉及的 `src/order/`、`src/bus/`、`src/inventory/` 改造点与四大工程红线验收标准，文末必须附上 `<!-- gh-aw-sub-issue -->` 与 `<!-- gh-aw-issue-triage:triaged -->`。
-2. **`[Sub-issue B · 并发与混沌测试] <幂等、故障注入与并发压测标题>`**（若涉及 `tests/order-cancel.test.ts` 验证）：
+2. **`[Sub-issue B · 并发与混沌测试] <幂等、故障注入与并发压测标题>`**（`temporary_id: "#aw_sub_b"`，若涉及 `tests/order-cancel.test.ts` 验证）：
    - **负责角色**：`@chaos-qa`（`.github/agents/chaos-qa.agent.md`）
-   - **自治等级**：`🟢 Tier L1（独立测试增补 —— 可直接交由 Cloud Agent / Background Agent 执行）`
+   - **自治等级与动作**：`🟢 Tier L1（独立测试增补）` —— **✅ 创建后必须在本次运行中立即调用 `assign_to_agent(issue_number: "#aw_sub_b", agent: "copilot")`**，直接分配给 Cloud Agent 运行生成 PR！
    - **标签**：`["enhancement", "agentic-sdlc"]`
    - **正文要求**：写明 `## 关联父需求：#<PARENT_NUMBER>`、负责角色、遵循 `.github/instructions/testing.instructions.md` 需补充的幂等重放、`injectTransientDbTimeouts` 与 `Promise.all` 并发竞态测试点，文末必须附上 `<!-- gh-aw-sub-issue -->` 与 `<!-- gh-aw-issue-triage:triaged -->`。
-3. **`[Sub-issue C · 可观测性与运维] <监控指标、UI 看板与灰度回滚手册标题>`**（若涉及 `src/observability/`、`public/dashboard.html`、`docs/RUNBOOK.md`）：
+3. **`[Sub-issue C · 可观测性与运维] <监控指标、UI 看板与灰度回滚手册标题>`**（`temporary_id: "#aw_sub_c"`，若涉及 `src/observability/`、`public/dashboard.html`、`docs/RUNBOOK.md`）：
    - **负责角色**：`@sre-observability`（`.github/agents/sre-observability.agent.md`）
-   - **自治等级**：`🟢 Tier L1（UI 看板 / 可观测性与文档变更 —— 可直接调用 Cloud Agent 生成 PR）`
+   - **自治等级与动作**：`🟢 Tier L1（UI 看板 / 可观测性与文档变更）` —— **✅ 创建后必须在本次运行中立即调用 `assign_to_agent(issue_number: "#aw_sub_c", agent: "copilot")`**，直接分配给 Cloud Agent 运行生成 PR！
    - **标签**：`["documentation", "agentic-sdlc"]`
    - **正文要求**：写明 `## 关联父需求：#<PARENT_NUMBER>`、负责角色、`MetricsCollector` 指标暴露、`public/dashboard.html` 看板展示及 `docs/RUNBOOK.md` 灰度/回滚预案要求，文末必须附上 `<!-- gh-aw-sub-issue -->` 与 `<!-- gh-aw-issue-triage:triaged -->`。
 
@@ -222,19 +225,19 @@ safe-outputs:
 
 ## 第六步：判断是否适合直接调用 Cloud Agent 生成 PR（分级自治门禁）
 
-在完成代码影响分析（及必要的父需求拆解）后，你必须严格按照以下 **两级自治策略（Autonomy Tiering Policy）** 判断是否对**当前 Issue** 调用 `assign_to_agent`：
+在完成代码影响分析（及必要的父需求拆解）后，你必须严格按照以下 **两级自治策略（Autonomy Tiering Policy）** 判断是否调用 `assign_to_agent`（注意：由于 `assign-to-agent.target` 配置为 `"*"`, 调用 `assign_to_agent` 时**必须显式传入 `issue_number`**，可以是当前 Issue 编号，也可以是第五步拆出的子单 `temporary_id` 如 `"#aw_sub_b"`、`"#aw_sub_c"`）：
 
 ### 🟢 Tier L1：适合直接调用 Cloud Agent 自动生成 PR（Auto-PR Enabled）
 **判定条件（必须全部满足）**：
 1. **变更性质属于“面向 UI 的变更”或“边界清晰的中小变更”**：
    - **UI / 前端看板变更**：仅涉及 `public/dashboard.html` 或 `src/server.ts` 非核心交易展示逻辑（如 UI 样式调整、看板卡片新增、文案/图表优化、只读状态展示）；
-   - **可观测性与运维文档中小变更（含 `[Sub-issue C]`）**：仅涉及 `src/observability/metrics.ts` 指标埋点统计、`docs/RUNBOOK.md`、`docs/ARCHITECTURE.md`、`README.md` 文档更新；
-   - **独立测试增补（含 `[Sub-issue B]`）**：仅在 `tests/order-cancel.test.ts` 中新增或完善测试用例，不修改 `src/order/`、`src/bus/`、`src/inventory/` 生产核心交易实现；
+   - **可观测性与运维文档中小变更（含拆出的 `[Sub-issue C]` `#aw_sub_c`）**：仅涉及 `src/observability/metrics.ts` 指标埋点统计、`docs/RUNBOOK.md`、`docs/ARCHITECTURE.md`、`README.md` 文档更新；
+   - **独立测试增补（含拆出的 `[Sub-issue B]` `#aw_sub_b`）**：仅在 `tests/order-cancel.test.ts` 中新增或完善测试用例，不修改 `src/order/`、`src/bus/`、`src/inventory/` 生产核心交易实现；
    - **局部小型非资损变更**：单一模块内的轻量级辅助修改，不改变跨服务接口契约，也不触碰库存数量扣减/回补、乐观锁 `version` 或消息总线重试机制。
 2. **不涉及跨服务架构改造，也不触碰核心交易状态机与库存账本**。
 
 **Tier L1 执行动作**：
-- ✅ **必须调用 `assign_to_agent`**：将当前 Issue 指派给 `copilot`（Cloud Agent），让其在云端隔离沙箱中自动拉起分支并直接生成 Pull Request。
+- ✅ **必须调用 `assign_to_agent(issue_number: <目标单号或 #aw_sub_b / #aw_sub_c>, agent: "copilot")`**：将目标 L1 单（或同次运行拆出的 L1 子单 `#aw_sub_b`、`#aw_sub_c`）直接指派给 `copilot`（Cloud Agent），让其在云端隔离沙箱中自动拉起分支并直接生成 Pull Request。
 - 在 Issue 正文与评论中标记：**`🟢 自治判定：Tier L1（UI / 中小变更）—— 已自动指派 Cloud Agent 直接生成 PR`**。
 
 ---
@@ -245,15 +248,15 @@ safe-outputs:
    - 同时涉及 `src/order/`、`src/bus/`、`src/inventory/` 中两个及以上服务模块的联动改造；
    - 修改跨服务领域事件契约或核心数据结构（`src/types.ts` 中的 `OrderCancelledEvent`、`InventoryItem`、`RestockResult` 等）；
    - 跨越多个专业角色的父级需求（Parent Feature / Epic，此时已在第五步自动拆解为 Sub-issues A / B / C）。
-2. **核心交易与资损敏感变更（Core Transaction & Concurrency Safety，含 `[Sub-issue A]`）**：
+2. **核心交易与资损敏感变更（Core Transaction & Concurrency Safety，含拆出的 `[Sub-issue A]` `#aw_sub_a`）**：
    - 涉及 `src/order/order-service.ts` 的订单下单/取消状态机流转或事件发布主链路；
    - 涉及 `src/inventory/inventory-service.ts` 的库存扣减/回补计算、`idempotencyKey` 幂等控制、`version` 乐观锁 CAS 并发控制或非原子读写竞态修复；
    - 涉及 `src/bus/event-bus.ts` 的消息投递可靠性、指数退避重试算法（Full Jitter）或死信队列 `inventory.restock.dlq` 路由逻辑。
 
 **Tier L2 执行动作**：
-- 🛑 **严禁对当前 Issue 调用 `assign_to_agent`**（不要自动触发 Cloud Agent 直接生成 PR！必须留给人类开发人员/架构师评审后手动指派）。
+- 🛑 **严禁对当前父 Issue 及 `#aw_sub_a` 调用 `assign_to_agent`**（不要对父单和核心交易子单 A 自动触发 Cloud Agent 生成 PR！必须留给人类开发人员/架构师评审后手动指派；但注意：**同次拆出的 L1 子单 `#aw_sub_b` 和 `#aw_sub_c` 仍应按第五步规则直接调用 `assign_to_agent` 自动分配给 Cloud Agent**）。
 - ✅ **调用 `add_labels`**：确保添加 `high-priority` 与 `agentic-sdlc` 标签。
-- 在 Issue 正文与评论中醒目标记：**`🟠 自治判定：Tier L2（跨服务架构 / 核心交易变更）—— 需开发人员架构评审后手动指派 Agent`**。
+- 在 Issue 正文与评论中醒目标记：**`🟠 自治判定：Tier L2（跨服务架构 / 核心交易变更）—— 父单与核心交易子单 A 需开发人员架构评审后手动指派；L1 子单 B/C 已自动分配 Cloud Agent`**。
 - 在评论中给出 **人工审核与多路 Agent 协同指派指引**：
   1. 明确列出触发人工门禁的原因（涉及哪些跨服务边界或核心交易资损红线）；
   2. 如果已在第五步自动拆解了 Sub-issues（`#aw_sub_a` / `#aw_sub_b` / `#aw_sub_c`），列出拆解出的子任务清单及其各自对应的专业 Agent 与自治等级；
