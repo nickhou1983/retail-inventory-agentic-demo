@@ -1,0 +1,26 @@
+name: Structured Feature Request (Agentic SDLC)
+description: 创建包含明确验收标准（Acceptance Criteria）的结构化需求工单，可直接指派给 Copilot Cloud Agent
+title: "[Feature] 订单取消后实时库存回补与幂等重试改造"
+labels: ["enhancement", "agentic-sdlc", "high-priority"]
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: 业务背景与痛点
+      value: |
+        大促期间大量用户下单后在 5 分钟内取消订单，但库存需要在每小时跑批任务中才释放，导致热门商品“页面显示缺货、实际仓库有货”，转化率严重受损。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: 可验证验收标准（Acceptance Criteria）
+      value: |
+        - [ ] 1. **实时释放**：订单取消后 30 秒内完成库存释放回补（`OrderService` 异步发布 `OrderCancelledEvent`）
+        - [ ] 2. **严格幂等**：重复取消消息（相同 `idempotencyKey`）不得重复增加库存
+        - [ ] 3. **失败重试**：库存服务超时或异常时支持自动退避重试（最多 3 次）
+        - [ ] 4. **死信告警**：重试失败超过阈值时路由至死信队列 `inventory.restock.dlq` 并触发告警指标
+        - [ ] 5. **完整审计**：记录库存回补审计日志（变更前后数量、幂等键、状态、时间戳）
+        - [ ] 6. **性能无损**：不影响原有下单与取消主链路性能，且在高并发取消下无竞态（乐观锁 `version` 保护）
+    validations:
+      required: true

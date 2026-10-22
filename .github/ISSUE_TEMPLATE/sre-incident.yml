@@ -1,0 +1,25 @@
+name: SRE Production Incident Feedback (Act VI Loop)
+description: 生产灰度监控与 SRE 诊断自动回流至研发闭环的结构化故障单
+title: "[SRE-Incident] 大促整点峰值库存回补重试突增与连接池竞争优化"
+labels: ["sre-feedback", "performance", "agentic-sdlc"]
+body:
+  - type: textarea
+    id: telemetry
+    attributes:
+      label: 生产异常遥测与告警指标
+      value: |
+        - 灰度比例：10% 生产流量
+        - 异常指标：`inventory_restock_retry_total` 峰值突增 420%，`inventory_restock_dlq_total` 新增 3 条告警
+        - 错误摘要：`InventoryLockTimeoutError: CAS version conflict burst on hot SKU-IPHONE16-PRO`
+    validations:
+      required: true
+  - type: textarea
+    id: fix-plan
+    attributes:
+      label: 建议修复方案（供 Coding Agent 执行）
+      value: |
+        - [ ] 在 `EventBus` 重试退避中增加随机抖动（Full Jitter），打散热点 SKU 的并发重试风暴
+        - [ ] 在 `InventoryService` 中支持热点 SKU 乐观锁冲突时的微退避自旋重试
+        - [ ] 补充热点 SKU 50 并发取消冲击测试
+    validations:
+      required: true
