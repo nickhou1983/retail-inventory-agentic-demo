@@ -15,6 +15,7 @@
 | **Tier 2 · 路径级规则** | [`.github/instructions/inventory-db.instructions.md`](.github/instructions/inventory-db.instructions.md)<br/>[`.github/instructions/testing.instructions.md`](.github/instructions/testing.instructions.md) | 通过 `applyTo` 在修改库存代码或测试代码时自动注入 CAS 乐观锁与混沌测试规范 |
 | **Tier 3 · 任务提示模板** | [`.github/prompts/plan-inventory-restock.prompt.md`](.github/prompts/plan-inventory-restock.prompt.md)<br/>[`.github/prompts/race-condition-fix.prompt.md`](.github/prompts/race-condition-fix.prompt.md)<br/>[`.github/prompts/sre-incident-triage.prompt.md`](.github/prompts/sre-incident-triage.prompt.md) | 对应第二幕（Plan 诊断）、第四/五幕（竞态修复）、第六幕（SRE 故障回流）的一键斜杠命令 |
 | **Tier 4 · 专业智能体** | [`.github/agents/inventory-impl.agent.md`](.github/agents/inventory-impl.agent.md)<br/>[`.github/agents/chaos-qa.agent.md`](.github/agents/chaos-qa.agent.md)<br/>[`.github/agents/sre-observability.agent.md`](.github/agents/sre-observability.agent.md) | 业务实现专家（Agent A）、并发与混沌测试专家（Agent B）、可观测性与运维专家（Agent C） |
+| **Agentic Workflow** | [`.github/workflows/issue-triage.md`](.github/workflows/issue-triage.md)<br/>[`.github/workflows/issue-triage.lock.yml`](.github/workflows/issue-triage.lock.yml) | 新建/更新 Issue 自动分析、不清晰追问、专业化描述重构、分类打标、受影响代码定位与专业 Agent 指派 |
 
 ### 2. 代码中预埋的 5 大“故意缺陷”（供第二幕 Plan 诊断与第四幕 PR 拦截演示）
 在 `main` 分支初始基线中，代码可正常编译并通过基础测试（`npm test`），但精准预埋了演示所需的 5 处架构断层：
