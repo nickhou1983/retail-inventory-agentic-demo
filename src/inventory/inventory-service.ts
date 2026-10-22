@@ -1,4 +1,5 @@
 import { InventoryItem, OrderCancelledEvent, RestockAuditEntry } from '../types.js';
+import { metrics } from '../observability/metrics.js';
 
 /**
  * Retail Inventory Service
@@ -71,29 +72,34 @@ export class InventoryService {
     reason?: string;
     item: InventoryItem;
   }> {
-    if (this.simulateTimeoutCount > 0) {
-      this.simulateTimeoutCount -= 1;
-      throw new Error(`InventoryDBTimeoutError: Connection timed out while restocking order ${event.orderId}`);
+    const startedAt = performance.now();
+    try {
+      if (this.simulateTimeoutCount > 0) {
+        this.simulateTimeoutCount -= 1;
+        throw new Error(`InventoryDBTimeoutError: Connection timed out while restocking order ${event.orderId}`);
+      }
+
+      const item = this.items.get(event.sku);
+      if (!item) {
+        throw new Error(`SKU ${event.sku} not found`);
+      }
+
+      // [GAP #3A]: Missing idempotency check on `event.idempotencyKey`!
+      // [GAP #3B - ACT IV RACE CONDITION]: Unsafe read-modify-write across async boundary without `version` CAS check!
+      const snapshotAvailable = item.availableQty;
+      const snapshotReserved = item.reservedQty;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      item.availableQty = snapshotAvailable + event.quantity;
+      item.reservedQty = Math.max(0, snapshotReserved - event.quantity);
+      item.updatedAt = new Date().toISOString();
+
+      // [GAP #3C]: Missing `this.auditLogs.push(...)` audit trail!
+
+      return { applied: true, item: { ...item } };
+    } finally {
+      metrics.observeRestockLatency(event.sku, performance.now() - startedAt);
     }
-
-    const item = this.items.get(event.sku);
-    if (!item) {
-      throw new Error(`SKU ${event.sku} not found`);
-    }
-
-    // [GAP #3A]: Missing idempotency check on `event.idempotencyKey`!
-    // [GAP #3B - ACT IV RACE CONDITION]: Unsafe read-modify-write across async boundary without `version` CAS check!
-    const snapshotAvailable = item.availableQty;
-    const snapshotReserved = item.reservedQty;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-
-    item.availableQty = snapshotAvailable + event.quantity;
-    item.reservedQty = Math.max(0, snapshotReserved - event.quantity);
-    item.updatedAt = new Date().toISOString();
-
-    // [GAP #3C]: Missing `this.auditLogs.push(...)` audit trail!
-
-    return { applied: true, item: { ...item } };
   }
 
   getStock(sku: string): InventoryItem | undefined {

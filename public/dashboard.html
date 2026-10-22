@@ -102,6 +102,26 @@
       margin-bottom: 20px;
       font-size: 14px;
     }
+    .inventory-table { margin-top: 8px; }
+    .alert-badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      margin: 2px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .alert-badge.low-stock {
+      color: #fde68a;
+      background: rgba(245, 158, 11, 0.16);
+      border: 1px solid rgba(245, 158, 11, 0.6);
+    }
+    .alert-badge.high-conflict {
+      color: #fecdd3;
+      background: rgba(244, 63, 94, 0.16);
+      border: 1px solid rgba(244, 63, 94, 0.6);
+    }
   </style>
 </head>
 <body>
@@ -146,19 +166,56 @@
   </div>
 
   <script>
+    const LOW_STOCK_THRESHOLD = 3;
+    const HIGH_CONFLICT_THRESHOLD = 5;
+    const RESTOCK_LATENCY_BUCKETS = [10, 25, 50, 100, 250, 500, 1000];
+
+    function metricLabel(value) {
+      return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    }
+
+    function restockLatencyP95(metrics, sku) {
+      const label = metricLabel(sku);
+      const count = metrics[`inventory_restock_latency_ms_count{sku="${label}"}`] ?? 0;
+      if (count === 0) return '—';
+      const target = Math.ceil(count * 0.95);
+      for (const bucket of RESTOCK_LATENCY_BUCKETS) {
+        if (metrics[`inventory_restock_latency_ms_bucket{sku="${label}",le="${bucket}"}`] >= target) {
+          return `≤${bucket}ms`;
+        }
+      }
+      return '>1000ms';
+    }
+
     async function refreshState() {
       const res = await fetch('/api/state');
       const state = await res.json();
-      document.getElementById('inventoryList').innerHTML = state.inventory.map(item => `
-        <div style="padding: 10px 0; border-bottom: 1px solid #334155;">
-          <div style="font-weight: 700;">${item.name} (${item.sku})</div>
-          <div style="margin-top: 6px; font-size: 14px;">
-            可用库存: <strong style="color: #2dd4bf; font-size: 18px;">${item.availableQty}</strong> |
-            预占锁定: <strong style="color: #f59e0b; font-size: 18px;">${item.reservedQty}</strong> |
-            乐观锁版本: <code>v${item.version}</code>
-          </div>
-        </div>
-      `).join('');
+      document.getElementById('inventoryList').innerHTML = `
+        <table class="inventory-table">
+          <thead><tr><th>商品 / SKU</th><th>可用</th><th>预占</th><th>版本</th><th>回补 P95</th><th>预警</th></tr></thead>
+          <tbody>${state.inventory.map(item => {
+            const conflicts = state.metrics[
+              `inventory_optimistic_lock_retry_total{sku="${metricLabel(item.sku)}"}`
+            ] ?? 0;
+            const alerts = [
+              item.availableQty <= LOW_STOCK_THRESHOLD
+                ? '<span class="alert-badge low-stock">低库存</span>'
+                : '',
+              conflicts >= HIGH_CONFLICT_THRESHOLD
+                ? `<span class="alert-badge high-conflict">高冲突 · ${conflicts}</span>`
+                : ''
+            ].join('');
+            return `
+              <tr>
+                <td>${item.name}<br><code>${item.sku}</code></td>
+                <td><strong style="color: #2dd4bf;">${item.availableQty}</strong></td>
+                <td><strong style="color: #f59e0b;">${item.reservedQty}</strong></td>
+                <td><code>v${item.version}</code></td>
+                <td>${restockLatencyP95(state.metrics, item.sku)}</td>
+                <td>${alerts || '—'}</td>
+              </tr>`;
+          }).join('')}</tbody>
+        </table>`;
 
       document.getElementById('metricsBox').textContent = JSON.stringify(state.metrics, null, 2);
 
