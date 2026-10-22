@@ -10,6 +10,10 @@ permissions:
   issues: read
   pull-requests: read
 
+engine:
+  id: copilot
+  model: gpt-4.1
+
 tools:
   github:
     mode: gh-proxy
@@ -55,6 +59,7 @@ safe-outputs:
     max: 3
   assign-to-agent:
     max: 1
+  report-failure-as-issue: false
   noop:
 ---
 
