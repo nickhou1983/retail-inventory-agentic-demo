@@ -51,6 +51,16 @@
       font-size: 12px;
       font-weight: 700;
     }
+    .badge.healthy {
+      background: rgba(45, 212, 191, 0.15);
+      color: var(--teal);
+      border-color: rgba(45, 212, 191, 0.4);
+    }
+    .badge.unhealthy {
+      background: rgba(244, 63, 94, 0.15);
+      color: var(--rose);
+      border-color: rgba(244, 63, 94, 0.4);
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -111,6 +121,7 @@
       <h1 style="font-size: 24px; margin-top: 8px;">零售大促订单取消与实时库存回补监控台</h1>
     </div>
     <div>
+      <span class="badge" id="reconciliationHealth" role="status" aria-live="polite">实时库存对账：检查中</span>
       <button onclick="createDemoOrder()">+ 模拟大促下单 (锁库存 2 件)</button>
       <button class="secondary" onclick="refreshState()">刷新状态</button>
     </div>
@@ -147,8 +158,17 @@
 
   <script>
     async function refreshState() {
-      const res = await fetch('/api/state');
-      const state = await res.json();
+      let state;
+      try {
+        const res = await fetch('/api/state');
+        if (!res.ok) throw new Error(`State request failed: ${res.status}`);
+        state = await res.json();
+      } catch {
+        const healthBadge = document.getElementById('reconciliationHealth');
+        healthBadge.textContent = '实时库存对账：未知';
+        healthBadge.classList.remove('healthy', 'unhealthy');
+        return;
+      }
       document.getElementById('inventoryList').innerHTML = state.inventory.map(item => `
         <div style="padding: 10px 0; border-bottom: 1px solid #334155;">
           <div style="font-weight: 700;">${item.name} (${item.sku})</div>
@@ -161,6 +181,18 @@
       `).join('');
 
       document.getElementById('metricsBox').textContent = JSON.stringify(state.metrics, null, 2);
+
+      const reconciliation = state.reconciliation;
+      const healthBadge = document.getElementById('reconciliationHealth');
+      const healthy = reconciliation?.status === 'healthy';
+      const unhealthy = reconciliation?.status === 'unhealthy';
+      healthBadge.textContent = healthy
+        ? '实时库存对账：健康'
+        : unhealthy
+          ? `实时库存对账：异常（${reconciliation.mismatches.length} 个 SKU）`
+          : '实时库存对账：未知';
+      healthBadge.classList.toggle('healthy', healthy);
+      healthBadge.classList.toggle('unhealthy', unhealthy);
 
       if (state.auditLogs.length > 0 || state.dlq.length > 0) {
         document.getElementById('auditBox').innerHTML =

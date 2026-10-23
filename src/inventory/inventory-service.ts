@@ -1,4 +1,14 @@
 import { InventoryItem, OrderCancelledEvent, RestockAuditEntry } from '../types.js';
+import { metrics } from '../observability/metrics.js';
+
+interface InventoryReconciliationResult {
+  status: 'healthy' | 'unhealthy' | 'unknown';
+  mismatches: Array<{
+    sku: string;
+    expectedQty: number | null;
+    observedQty: number | null;
+  }>;
+}
 
 /**
  * Retail Inventory Service
@@ -16,6 +26,8 @@ export class InventoryService {
   private processedIdempotencyKeys = new Set<string>();
   private auditLogs: RestockAuditEntry[] = [];
   private simulateTimeoutCount = 0;
+  private baselineTotals = new Map<string, number>();
+  private mismatchedSkus = new Set<string>();
 
   constructor(initialItems?: InventoryItem[]) {
     const defaults: InventoryItem[] = initialItems ?? [
@@ -38,6 +50,7 @@ export class InventoryService {
     ];
     for (const item of defaults) {
       this.items.set(item.sku, { ...item });
+      this.baselineTotals.set(item.sku, item.availableQty + item.reservedQty);
     }
   }
 
@@ -91,9 +104,59 @@ export class InventoryService {
     item.reservedQty = Math.max(0, snapshotReserved - event.quantity);
     item.updatedAt = new Date().toISOString();
 
+    if (event.cancellationType === 'RISK') {
+      const occurredAt = Date.parse(event.occurredAt);
+      if (Number.isFinite(occurredAt) && occurredAt <= Date.now()) {
+        metrics.recordRiskCancellationRestockDuration(Date.now() - occurredAt);
+      }
+    }
+
     // [GAP #3C]: Missing `this.auditLogs.push(...)` audit trail!
 
     return { applied: true, item: { ...item } };
+  }
+
+  reconcileInventory(): InventoryReconciliationResult {
+    if (this.baselineTotals.size === 0) {
+      return { status: 'unknown', mismatches: [] };
+    }
+
+    const mismatches: InventoryReconciliationResult['mismatches'] = [];
+    for (const [sku, expectedQty] of this.baselineTotals) {
+      const item = this.items.get(sku);
+      const observedQty = item ? item.availableQty + item.reservedQty : null;
+      if (
+        !item ||
+        observedQty === null ||
+        observedQty !== expectedQty ||
+        item.availableQty < 0 ||
+        item.reservedQty < 0
+      ) {
+        mismatches.push({ sku, expectedQty, observedQty });
+      }
+    }
+    for (const [sku, item] of this.items) {
+      if (!this.baselineTotals.has(sku)) {
+        mismatches.push({
+          sku,
+          expectedQty: null,
+          observedQty: item.availableQty + item.reservedQty,
+        });
+      }
+    }
+
+    const currentMismatchedSkus = new Set(mismatches.map(({ sku }) => sku));
+    for (const sku of currentMismatchedSkus) {
+      if (!this.mismatchedSkus.has(sku)) {
+        metrics.recordInventoryReconciliationMismatch();
+      }
+    }
+    this.mismatchedSkus = currentMismatchedSkus;
+
+    return {
+      status: mismatches.length === 0 ? 'healthy' : 'unhealthy',
+      mismatches,
+    };
   }
 
   getStock(sku: string): InventoryItem | undefined {

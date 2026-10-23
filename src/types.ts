@@ -18,6 +18,7 @@ export interface OrderCancelledEvent {
   sku: string;
   quantity: number;
   occurredAt: string;
+  cancellationType?: 'CUSTOMER' | 'RISK';
 }
 
 export interface InventoryItem {
