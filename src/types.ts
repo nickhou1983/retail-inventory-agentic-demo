@@ -37,7 +37,7 @@ export interface RestockAuditEntry {
   idempotencyKey: string;
   beforeQty: number;
   afterQty: number;
-  status: 'RESTOCKED' | 'DUPLICATE_SKIPPED' | 'DLQ_ROUTED';
+  status: 'RESTOCKED' | 'DUPLICATE_SKIPPED' | 'FAILED' | 'DLQ_ROUTED';
   timestamp: string;
 }
 

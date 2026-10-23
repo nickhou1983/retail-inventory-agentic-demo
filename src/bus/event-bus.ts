@@ -3,19 +3,14 @@ import { metrics } from '../observability/metrics.js';
 
 export type EventHandler<T = OrderCancelledEvent> = (event: T) => Promise<void>;
 
-/**
- * In-Memory Event Bus for Order & Inventory Microservices
- *
- * [ARCHITECTURAL GAP #2 - FOR LIVE DEMO]:
- * Currently `publish()` only executes handlers once and logs an error on failure.
- * It lacks:
- * 1. Exponential backoff retry on transient DB timeout errors (`maxRetries`)
- * 2. Dead-Letter Queue (`inventory.restock.dlq`) routing after max retries
- * 3. Alert metric increments when messages land in DLQ
- */
 export class EventBus {
   private handlers = new Map<string, EventHandler[]>();
   private deadLetterQueue: DeadLetterMessage[] = [];
+
+  constructor(
+    private readonly maxRetries = 3,
+    private readonly onDeadLetter?: (event: OrderCancelledEvent) => void
+  ) {}
 
   subscribe(topic: string, handler: EventHandler): void {
     const existing = this.handlers.get(topic) ?? [];
@@ -26,13 +21,37 @@ export class EventBus {
   async publish(topic: string, event: OrderCancelledEvent): Promise<void> {
     const topicHandlers = this.handlers.get(topic) ?? [];
     for (const handler of topicHandlers) {
-      try {
-        // [GAP #2]: No retry loop and no Dead-Letter Queue routing when handler throws!
-        await handler(event);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[EventBus] Handler failed for topic=${topic}, orderId=${event.orderId}: ${message}`);
+      let lastError: unknown = undefined;
+      let succeeded = false;
+      let attempt = 0;
+      while (attempt <= this.maxRetries) {
+        try {
+          await handler(event);
+          succeeded = true;
+          break;
+        } catch (err) {
+          lastError = err;
+          if (attempt === this.maxRetries) {
+            break;
+          }
+          metrics.increment('inventory_restock_retry_total');
+          await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** attempt));
+          attempt += 1;
+        }
+      }
+
+      if (!succeeded) {
+        const errorMessage = lastError instanceof Error ? lastError.message : String(lastError);
+        this.deadLetterQueue.push({
+          topic: 'inventory.restock.dlq',
+          payload: event,
+          errorMessage,
+          attempts: attempt + 1,
+          failedAt: new Date().toISOString(),
+        });
         metrics.increment('event_bus_unhandled_errors_total');
+        metrics.increment('inventory_restock_dlq_alerts_total');
+        this.onDeadLetter?.(event);
       }
     }
   }
