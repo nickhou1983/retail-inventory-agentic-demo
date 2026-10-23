@@ -37,6 +37,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/state') {
+      const reconciliation = ctx.inventoryService.reconcileInventory();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -44,6 +45,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           orders: ctx.orderService.listOrders(),
           auditLogs: ctx.inventoryService.getAuditLogs(),
           dlq: ctx.eventBus.getDeadLetterQueue(),
+          reconciliation,
           metrics: ctx.metrics.snapshot(),
         })
       );
