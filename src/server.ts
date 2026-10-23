@@ -10,8 +10,8 @@ import { metrics } from './observability/metrics.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function createAppContext() {
-  const eventBus = new EventBus();
   const inventoryService = new InventoryService();
+  const eventBus = new EventBus(3, (event) => inventoryService.recordDeadLetter(event));
   const orderService = new OrderService(eventBus, inventoryService);
 
   eventBus.subscribe('order.cancelled', async (event) => {

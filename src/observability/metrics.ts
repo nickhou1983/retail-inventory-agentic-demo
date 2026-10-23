@@ -15,6 +15,10 @@ export class MetricsCollector {
     orders_created_total: 0,
     orders_cancelled_total: 0,
     event_bus_unhandled_errors_total: 0,
+    inventory_restock_success_total: 0,
+    inventory_restock_duplicate_skipped_total: 0,
+    inventory_restock_retry_total: 0,
+    inventory_restock_dlq_alerts_total: 0,
   };
 
   increment(metricName: string, by = 1): void {

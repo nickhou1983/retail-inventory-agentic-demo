@@ -3,14 +3,6 @@ import { EventBus } from '../bus/event-bus.js';
 import { InventoryService } from '../inventory/inventory-service.js';
 import { metrics } from '../observability/metrics.js';
 
-/**
- * Retail Order Service
- *
- * [ARCHITECTURAL GAP #1 - FOR LIVE DEMO]:
- * When a user cancels an order in `cancelOrder()`, the order status is updated to `CANCELLED`,
- * but it does NOT publish an `OrderCancelledEvent` to `EventBus`.
- * As a result, reserved stock remains locked until the legacy hourly batch job runs!
- */
 export class OrderService {
   private orders = new Map<string, Order>();
 
@@ -48,8 +40,14 @@ export class OrderService {
     order.cancelReason = reason;
     metrics.increment('orders_cancelled_total');
 
-    // [GAP #1]: Missing real-time `OrderCancelledEvent` publication to `this.eventBus`!
-    // Legacy behavior: Waits for hourly cron reconciliation to release reserved stock.
+    void this.eventBus.publish('order.cancelled', {
+      eventId: `${order.orderId}:cancelled:${Date.now()}`,
+      idempotencyKey: `cancel:${order.orderId}:${order.sku}`,
+      orderId: order.orderId,
+      sku: order.sku,
+      quantity: order.quantity,
+      occurredAt: order.cancelledAt,
+    });
 
     return order;
   }

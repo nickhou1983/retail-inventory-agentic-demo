@@ -1,16 +1,6 @@
 import { InventoryItem, OrderCancelledEvent, RestockAuditEntry } from '../types.js';
+import { metrics } from '../observability/metrics.js';
 
-/**
- * Retail Inventory Service
- *
- * [ARCHITECTURAL GAP #3 & ACT IV RACE-CONDITION TRAP - FOR LIVE DEMO]:
- * 1. Missing `idempotencyKey` deduplication: If the same `OrderCancelledEvent` is delivered twice,
- *    stock is incremented twice!
- * 2. Missing Optimistic Locking (`version` CAS check) & Concurrency Control:
- *    `restockFromCancellation` performs an unsafe async read-then-write (`await delay` -> overwrite),
- *    causing lost updates or double restocks under concurrent requests.
- * 3. Missing structured audit trail (`auditLogs` is never populated).
- */
 export class InventoryService {
   private items = new Map<string, InventoryItem>();
   private processedIdempotencyKeys = new Set<string>();
@@ -73,27 +63,72 @@ export class InventoryService {
   }> {
     if (this.simulateTimeoutCount > 0) {
       this.simulateTimeoutCount -= 1;
+      const availableQty = this.items.get(event.sku)?.availableQty ?? 0;
+      this.recordAudit(event, 'FAILED', availableQty, availableQty);
       throw new Error(`InventoryDBTimeoutError: Connection timed out while restocking order ${event.orderId}`);
     }
 
     const item = this.items.get(event.sku);
     if (!item) {
+      this.recordAudit(event, 'FAILED', 0, 0);
       throw new Error(`SKU ${event.sku} not found`);
     }
 
-    // [GAP #3A]: Missing idempotency check on `event.idempotencyKey`!
-    // [GAP #3B - ACT IV RACE CONDITION]: Unsafe read-modify-write across async boundary without `version` CAS check!
-    const snapshotAvailable = item.availableQty;
-    const snapshotReserved = item.reservedQty;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const current = this.items.get(event.sku);
+      if (!current) {
+        throw new Error(`SKU ${event.sku} not found`);
+      }
+      if (this.processedIdempotencyKeys.has(event.idempotencyKey)) {
+        this.recordAudit(event, 'DUPLICATE_SKIPPED', current.availableQty, current.availableQty);
+        metrics.increment('inventory_restock_duplicate_skipped_total');
+        return { applied: false, reason: 'DUPLICATE_EVENT', item: { ...current } };
+      }
+      if (event.quantity <= 0 || current.reservedQty < event.quantity) {
+        this.recordAudit(event, 'FAILED', current.availableQty, current.availableQty);
+        throw new Error(`Insufficient reserved stock for ${event.sku}`);
+      }
 
-    item.availableQty = snapshotAvailable + event.quantity;
-    item.reservedQty = Math.max(0, snapshotReserved - event.quantity);
-    item.updatedAt = new Date().toISOString();
+      const snapshotVersion = current.version;
+      await new Promise((resolve) => setTimeout(resolve, 5));
 
-    // [GAP #3C]: Missing `this.auditLogs.push(...)` audit trail!
+      const latest = this.items.get(event.sku);
+      if (!latest) {
+        throw new Error(`SKU ${event.sku} not found`);
+      }
+      if (latest.version !== snapshotVersion) {
+        continue;
+      }
+      if (this.processedIdempotencyKeys.has(event.idempotencyKey)) {
+        this.recordAudit(event, 'DUPLICATE_SKIPPED', latest.availableQty, latest.availableQty);
+        metrics.increment('inventory_restock_duplicate_skipped_total');
+        return { applied: false, reason: 'DUPLICATE_EVENT', item: { ...latest } };
+      }
+      if (latest.reservedQty < event.quantity) {
+        this.recordAudit(event, 'FAILED', latest.availableQty, latest.availableQty);
+        throw new Error(`Insufficient reserved stock for ${event.sku}`);
+      }
 
-    return { applied: true, item: { ...item } };
+      const beforeQty = latest.availableQty;
+      latest.availableQty += event.quantity;
+      latest.reservedQty -= event.quantity;
+      latest.version += 1;
+      latest.updatedAt = new Date().toISOString();
+      this.processedIdempotencyKeys.add(event.idempotencyKey);
+      this.recordAudit(event, 'RESTOCKED', beforeQty, latest.availableQty);
+      metrics.increment('inventory_restock_success_total');
+
+      return { applied: true, item: { ...latest } };
+    }
+
+    const availableQty = this.items.get(event.sku)?.availableQty ?? 0;
+    this.recordAudit(event, 'FAILED', availableQty, availableQty);
+    throw new Error(`Inventory version conflict for ${event.sku}`);
+  }
+
+  recordDeadLetter(event: OrderCancelledEvent): void {
+    const availableQty = this.items.get(event.sku)?.availableQty ?? 0;
+    this.recordAudit(event, 'DLQ_ROUTED', availableQty, availableQty);
   }
 
   getStock(sku: string): InventoryItem | undefined {
@@ -107,5 +142,24 @@ export class InventoryService {
 
   getAuditLogs(): RestockAuditEntry[] {
     return [...this.auditLogs];
+  }
+
+  private recordAudit(
+    event: OrderCancelledEvent,
+    status: RestockAuditEntry['status'],
+    beforeQty: number,
+    afterQty: number
+  ): void {
+    this.auditLogs.push({
+      auditId: `${event.eventId}:${this.auditLogs.length + 1}`,
+      orderId: event.orderId,
+      sku: event.sku,
+      quantity: event.quantity,
+      idempotencyKey: event.idempotencyKey,
+      beforeQty,
+      afterQty,
+      status,
+      timestamp: new Date().toISOString(),
+    });
   }
 }
